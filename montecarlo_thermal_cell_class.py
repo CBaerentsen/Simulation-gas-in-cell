@@ -27,7 +27,7 @@ class montecarlo_thermal_cell:
 # =============================================================================
 #         Parameters to change:
 # =============================================================================
-        self.N_cell =int(5*10**(3)/cores)    #Number of atoms        
+        self.N_cell =int(2*10**(4)/cores)    #Number of atoms        
 
         self.x_cell = 1*1e-3 / 2   #Length of cell/2 in x- direction
         self.y_cell = 1*1e-3 / 2   #Length of cell/2 in y- direction
@@ -36,37 +36,64 @@ class montecarlo_thermal_cell:
         self.T = 273.15 + 55   #temperature of the cell
         self.m = 132.905451933 * (1.66053906660*1e-27)   #mass of one cesium atom        
                 
-        self.lam=self.m/10**-6    #float(10**-21)*1000
+        self.lam=self.m/1E-7    #float(10**-21)*1000
         
-        self.beam="mode" #can take "gaus","tophat", "mode"
-        self.tophat = (0.75*1E-3 )/2
-        self.w_0_2 = (900*1/3*1e-6)**2 #the waist squared 
-        self.double_pass=True
+        self.beam="tophat2" #can take "gaus","tophat", "mode", "tophat2"
+        self.n=3.2
+        self.tophat = self.x_cell*2
+        self.w_0_2 = (840/2*1e-6 * 5)**2 #the waist squared 
+        self.double_pass=False
         
-        self.t_step = 2.1853e-8# euler steps
-        self.T_0=2e-3 #length of simulation in seconds
+        self.t_step = 1.1853e-8# euler steps
+        self.T_0=1*1e-3*10*20 #length of simulation in seconds
         
-        self.Nrounds=10    #The number of simulations made before averageing
-        self.prerun=1000      #The amount of timesteps taken before data is taken
+        self.prerun=3000      #The amount of timesteps taken before data is taken
         
         
-        self.lamor=1372.5*10**3*2*np.pi                   #The lamor frequency
-        
+        # self.lamor=1372.5*10**3*2*np.pi                   #The lamor frequency
+        self.lamor=1300*10**3*2*np.pi
         # #
         # f = open("Larmor.pkl", 'rb')
         # data = pickle.load(f)
         # f.close()
         
+        
+        
         # self.magnetic_x=(data[0]-85)*1E-3
-        # self.magnetic_y=data[1]*1E3 * 2*np.pi*32.7875
+        # self.magnetic_y=data[1]*1E3 * 2*np.pi#*32.7875
         # self.lamor=""
-        # #
+        # # #
+        
+        x=np.arange(-2*1E-2,2*1E-2,0.5*1E-3)
+        x1=np.ones(len(x))
+        # y=(1372.5+0.1*x1)*10**3*2*np.pi
+        y=1.0782999999999994-1.2451721501783832e-07*(x*1e3)**2+8.672735108862965e-10*(x*1e3)**3+3.64805330285138e-10*(x*1e3)**4
+        y=y*1205607.001*2*np.pi
+        self.magnetic_x=x
+        self.magnetic_y=y
+        self.lamor=""
+        
+        #
+        
+        #
+        # pos=np.loadtxt("position.txt")
+        # dat1=np.loadtxt("data(1).txt")
+        # self.magnetic_x=(pos-110)*1E-3
+        # self.magnetic_y=((dat1*1E3+13250)*420000/13250/5-419992/5+41860)*2*np.pi#*32.7875
+        # self.lamor=""
+        
+        #
         
         self.staticdetuning=-3*10**9                         #-10**9 is 1 gigahertz blue detuning assuming no dopplershift
-        self.gammacom=0#5*1E3 /2  #9*5*10**19/staticdetuning**2            #1-math.exp(-10**3*t_step)       #The probability of the atom getting a random phase each timestep 
+        self.gammacom=110*np.pi*2  #9*5*10**19/staticdetuning**2            #1-math.exp(-10**3*t_step)       #The probability of the atom getting a random phase each timestep 
         self.a=3*10**9/self.staticdetuning                      #a1 in Julsgaard
- 
         
+        #running a MORS simulation if TRUE:
+        self.MORS = False
+        self.MORSLength = 1e-3*5*32 #in seconds
+        
+        self.MORSSteps = math.floor(self.MORSLength/self.t_step)
+        self.MORSReset = 0
 # =============================================================================
 # Cell parameters
 # =============================================================================
@@ -134,13 +161,11 @@ class montecarlo_thermal_cell:
     
         #light experienced by the atom
         np.random.default_rng(42)       #seeds the rng
-        self.phase=np.random.rand(self.N_cell)*2*np.pi  #The initial phase of the spin of all atoms is set between 0 and 2pi
-        self.jz=np.cos(self.phase)                        # jz components of the spin of the atoms
-        self.jy=np.sin(self.phase)                        # jz components of the spin of the atoms
-    
+        
+        self.XPquadratures()
+        
+        
         self.totalTime=0                     #The amount of time that has passed in the simultaion
-        
-        
 
         
         self.intmax=Quantum_laws.Intent(self,0,0,0)            #The maximum intensity
@@ -168,26 +193,29 @@ class montecarlo_thermal_cell:
         self.t_0=0
         self.t = time.time() #for the time of the ongoing similation
         
-        for Nrounds in range(self.Nrounds):
-            rounds=0
-            for int_1 in range(10):
+        rounds=0
+        for int_1 in range(100):
+            
+            for int_2 in range(int(self.rounds/100)):
+                if self.MORS==True:
+                    self.MORSrun(rounds)
+                    
+                physics.__init__(self,rounds)
+                rounds+=1
                 
-                for int_2 in range(int(self.rounds/10)):
-                    physics.__init__(self,Nrounds,rounds)
-                    rounds+=1
-                self.timer(10/self.Nrounds, worker)
+                    
+            self.timer(1, worker)
         print(worker + "Jobs Done!")
         if sound==True:
             playsound("C:/Users/chris/Music/JobsDone.mp3")
         self.save()
     
-    def UTT(self,Nrounds,rounds):
-        if Nrounds!=False:
-            measurement = np.sqrt(1/self.N_cell)*np.sum(self.a*self.normintent*self.jz)#+571/17365*np.sum(np.random.normal(scale=np.sqrt(normintent)))#ændre?
-            self.timetrace[Nrounds,rounds] += measurement
+    def UTT(self,rounds):
+        measurement = np.sqrt(1/self.N_cell)*np.sum(self.a*self.normintent*self.jz)#+571/17365*np.sum(np.random.normal(scale=np.sqrt(normintent)))#ændre?
+        self.timetrace[rounds] += measurement
     
     def setup(self):
-        self.timetrace = np.zeros((self.Nrounds,int(self.rounds/10)*10))
+        self.timetrace = np.zeros((int(self.rounds/100)*100))
         
         x = np.linspace(-self.x_cell, self.x_cell, 2000)
         y = np.linspace(-self.y_cell, self.y_cell, 2000)
@@ -200,8 +228,12 @@ class montecarlo_thermal_cell:
         volume=volume
         self.Intentnormalization=volume/2.5119744175472717e-05
         
+    def MORSrun(self,rounds):
+        if rounds==self.MORSReset:
+            self.XPquadratures(A=1000,random=False)
+            self.MORSReset += self.MORSSteps
         
-    
+
     
     def save(self):
         today = datetime.date.today()
@@ -239,7 +271,17 @@ class montecarlo_thermal_cell:
             t_0_min = math.floor((self.t_0-3600*t_0_hours)/60)
             t_0_s = math.floor((self.t_0-3600*t_0_hours-60*t_0_min))
             # Print procentages
-            print(worker + 'Simulated: %.1f%% ' % self.Pro + a + ' Time: %02d:' \
+            print(worker + 'Simulated: %.0f%% ' % self.Pro + a + ' Time: %02d:' \
                   % t_0_hours + "%02d:" % t_0_min + "%02d" % t_0_s + \
                   "\t Expected time left: %02d:" % timeleft_hours + "%02d:" % timeleft_min + "%02d" % timeleft_s)
 
+    
+    def XPquadratures(self,A=1,random=True):
+        if random==True:
+            self.phase=np.random.rand(self.N_cell)*2*np.pi  #The initial phase of the spin of all atoms is set between 0 and 2pi
+            self.jz=A*np.cos(self.phase)                        # jz components of the spin of the atoms
+            self.jy=A*np.sin(self.phase)                        # jz components of the spin of the atoms
+        else:
+            self.phase=np.zeros(self.N_cell)
+            self.jz=A*np.cos(self.phase)                        # jz components of the spin of the atoms
+            self.jy=A*np.sin(self.phase)                        # jz components of the spin of the atoms

@@ -9,13 +9,10 @@ import scipy.stats as scistat
 class Quantum_laws:
 # Evolves the spin of the atom
     def evol(self):
-    
-        Quantum_laws.prob(self)                                                  #Calculates the normalized intensity
-        Quantum_laws.calcdetuning(self)
             
         gamma=self.gammacom#+self.normintent*self.prob_intent+self.wallterm*self.wallscale       #Calculating the decay term taking into account both collision decay and
         
-        gamma=gamma*(2*np.pi)
+        gamma=gamma/2
         
         F_y=np.random.normal(size=self.N_cell,scale=np.sqrt(gamma))  #Calculating the langevin forces
         F_z=np.random.normal(size=self.N_cell,scale=np.sqrt(gamma))
@@ -26,6 +23,11 @@ class Quantum_laws:
         self.jy = -np.sin(magfreq*self.t_step)*self.jz+np.cos(magfreq*self.t_step)*self.jy-gamma*self.jy*self.t_step+F_y*np.sqrt(self.t_step) #+a*np.sqrt(t_step)*np.random.normal(size=N_cell,scale=np.sqrt(prob)) #-t_step*lamor*jz-gamma*jy*t_step+F_y*np.sqrt(t_step)#-np.sin(lamor*t_step)*jz+np.cos(lamor*t_step)*jy#-gamma*jy*t_step+F_y*np.sqrt(t_step)#+np.normal(scale=prob)*jx*delta_t
         self.jz = np.sin(magfreq*self.t_step)*jm+np.cos(magfreq*self.t_step)*self.jz-gamma*self.jz*self.t_step+F_z*np.sqrt(self.t_step) # t_step*lamor*jy-gamma*jz*t_step+F_z*np.sqrt(t_step)# np.sin(lamor*t_step)*jy+np.cos(lamor*t_step)*jz#-gamma*jz*t_step+F_z*np.sqrt(t_step)
     
+    def update_constants(self):
+        Quantum_laws.prob(self)                                                  #Calculates the normalized intensity
+        Quantum_laws.calcdetuning(self)
+        
+        
     def lamorf(self):
         if self.lamor=="":
             return np.interp(self.s[:,2], self.magnetic_x, self.magnetic_y)#+self.inhomogeneity*self.s[:,2]**2#+self.maxstarkshift*self.normintent
@@ -47,6 +49,9 @@ class Quantum_laws:
             x_in = np.where(np.abs(x)>self.tophat,0,1)
             y_in = np.where(np.abs(y)>self.tophat,0,1)
             return x_in*y_in
+        
+        elif self.beam=="tophat2":
+            return np.exp(-2*(x**2)/self.w_0_2)**self.n*np.exp(-2*(y**2)/self.w_0_2)**self.n
         
         elif self.beam=="mode":
             return self.intensity_mode(x,y,grid=False)
@@ -127,16 +132,17 @@ class Classical_laws:
         
 
 class physics:
-    def __init__(self,Nrounds=False,rounds=False):
+    def __init__(self,rounds=False):
         self.totalTime=self.totalTime+self.t_step  #Advance the clock
         Classical_laws.eulers(self)             #Move the pieces
-        Classical_laws.col(self)                       #Handel atom-atom collisions     
+        # Classical_laws.col(self)                       #Handel atom-atom collisions     
         Classical_laws.walls(self)                    #Keep them in
+        Quantum_laws.update_constants(self)
         Quantum_laws.evol(self)                      #Change the phase
         
-        self.UTT(Nrounds,rounds)                       #Record the phase
+        self.UTT(rounds)                       #Record the phase
         if self.double_pass == True:
             self.v[:,2]=-self.v[:,2]
-            Quantum_laws.evol(self)
-            self.UTT(Nrounds,rounds)                    #Record the phase
+            Quantum_laws.update_constants(self)
+            self.UTT(rounds)                    #Record the phase
             self.v[:,2]=-self.v[:,2]

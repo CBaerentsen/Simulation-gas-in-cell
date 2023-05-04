@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as scistat
 import pickle
+import scipy.signal as signal
 import math
 from lmfit import Model, minimize
 from scipy.ndimage import gaussian_filter1d as smoothen
@@ -72,12 +73,12 @@ class plotting:
         plt.colorbar()
     
     
-    def PSD(self,normalize=1,smooth=False,minus=0):
+    def PSD(self,resolution=-1,normalize=1,smooth=False,minus=0):
         self.normalize=normalize
-        self.FourierTransform()
+        self.FourierTransform(resolution)
+        self.Fourier+=-minus
         if smooth!= False:
             self.Fourier = smoothen(self.Fourier,smooth)
-        self.Fourier+=-minus
         plt.plot(self.freq,self.Fourier,ls='-',linewidth=2,alpha=0.6, color=self.color, label=self.name)  #Plot fourier transform
         self.Fouriermax=np.argmax(self.Fourier)                      #Find peak
         plt.subplots_adjust(right=0.75)
@@ -101,35 +102,35 @@ class plotting:
         return self.freq,self.Fourier
 
         
-    def fit(self, center=41.79,width=8):
+    def fit(self, center=41.79,width=10):
         boundaries=[center-width/2,center+width/2]
         f_model = self.freq[(self.freq>boundaries[0]) & (self.freq<boundaries[1])]
         psd_model = self.Fourier[(self.freq>boundaries[0]) & (self.freq<boundaries[1])]
-        minimum=np.min(psd_model)
-        psd_model=psd_model/minimum
         
-        omega0=self.Fouriermax; gamma=250; A=25; B=1.4
+        minimum=np.min(psd_model)
+        psd_model=psd_model
+        omega0=self.freq[self.Fouriermax]; gamma=0.037; A=5*1E1; B=minimum
         model = Model(plotting.Lorentzian)
-        model.set_param_hint('B', value = B, min=1.2)
+        model.set_param_hint('B', value = B, min=0)
         model.set_param_hint('A', value = A, min=0)
-        model.set_param_hint('omega0', value = omega0)
+        model.set_param_hint('omega0', value = omega0, min=omega0-0.01,max=omega0+0.01)
         model.set_param_hint('gamma', value = gamma, min=0)
         
-        weights=1/np.sqrt(psd_model)
-        result = model.fit(psd_model, omega=f_model,weights=weights)
-        # plt.plot(f_model,result.init_fit*minimum,'-')
+        weights=(psd_model)**(-1)
+        result = model.fit(psd_model, omega=f_model)
+        plt.plot(f_model,result.init_fit,'-')
         value = result.values["gamma"]*1E3
-        print(result.values["B"]*minimum)
+        # print(result.values["B"]*minimum)
         # print(value)
         text = "FWFM = %0.1f Hz" % value
-        plt.plot(f_model,result.best_fit*minimum,'-',color=self.color,label=text)
+        plt.plot(f_model,result.best_fit,'-',color=self.color,label=text)
         plt.legend()
         
-        # print(result.fit_report())
+        print(result.fit_report())
     
     def broadfit(self):
         center=self.freq[self.Fouriermax]
-        width=0
+        width=10
         boundaries=[center-width/2,center+width/2]
         f_model = self.freq[(self.freq<boundaries[0]) | (self.freq>boundaries[1])]/1E3
         psd_model = self.Fourier[(self.freq<boundaries[0]) | (self.freq>boundaries[1])]
@@ -137,23 +138,23 @@ class plotting:
         minimum=np.min(psd_model)
         psd_model=psd_model/minimum
         
-        omega0=center/1E3; gamma=0.04; A=1*1E6; B=0
-        model = Model(plotting.LinearResponse)
-        model.set_param_hint('B', value = B)
+        omega0=center/1E3; gamma=0.4; A=7*1E4; B=1.4
+        model = Model(plotting.Lorentzian)
+        model.set_param_hint('B', value = B,min=1.1)
         model.set_param_hint('A', value = A)
         model.set_param_hint('omega0', value = omega0,vary=False)
         model.set_param_hint('gamma', value = gamma, min=0)
    
         
         
-        weights=psd_model**(-1/2)
+        weights=psd_model**(-1)
     
         result = model.fit(psd_model, omega=f_model,weights=weights)
-        # plt.plot(f_model*1E3,result.init_fit,'-',color=self.color)
+        plt.plot(f_model*1E3,result.init_fit,'-',color=self.color)
         value = result.values["gamma"]*1E3
         print(result.values["B"])
         # print(value)
-        text = "FWFM = %0.1f Hz" % value
+        text = "FWFM = %0.1f kHz" % value
         plt.plot(f_model*1E3,result.best_fit*minimum,'-',color=self.color,label=text)
         plt.legend()
         
@@ -167,27 +168,33 @@ class plotting:
         return np.abs(A / (omega0**2-omega**2+(gamma/2)**2+1j*gamma*omega))**2+B
     
     def Lorentzian(omega,omega0,gamma,A,B):
-        return A*gamma/2 / ((omega-omega0)**2+(gamma/2)**2)+B
+        return A*(gamma/2 / ((omega-omega0)**2+(gamma/2)**2))+B
         
-    def FourierTransform(self):
+    def FourierTransform(self,resolution):
         factor=2
         self.timetrace=self.timetrace/self.normalize
-        self.Fourier=np.zeros(math.floor(len(self.timetrace[0])/factor))
-        for n in range(len(self.timetrace)):
-
-            Fourier=np.fft.fft(self.timetrace[n])  #Get fourier transform of timetrace
-    
-            length=len(Fourier)             #Find the length of the array
-            Half=math.floor(length/factor)  #Find the midpoint so we only plot positive values                                
-            Fourier=Fourier[0:Half]         #Round up so that it includes zero foruneven length
-    
-            self.Fourier=self.Fourier+np.abs(Fourier)**2
+        if resolution==-1:
+            resolution=1/self.T_0
+        split=int(resolution*self.T_0)
+        if split>=1:
+            length=math.floor(len(self.timetrace)/split)
+            self.Fourier=np.zeros(math.floor(length/factor))
+            for n in range(split):
+                T=self.timetrace[0+n*length:(n+1)*length]
+                A=np.hanning(len(T))
+                A=1
+                Fourier=np.fft.fft(T*A)  #Get fourier transform of timetrace
+                Fourier=Fourier[0:math.floor(length/factor)]         #Round up so that it includes zero foruneven length
         
-        self.Fourier=self.Fourier/len(self.timetrace)
-
+                self.Fourier=self.Fourier+np.abs(Fourier)**2
+            
+            self.Fourier=self.Fourier/length
     
-        self.freq=np.fft.fftfreq(self.Fourier.size*factor)[0:Half]*(1/self.t_step/10**3)
-    
+        
+            self.freq=np.fft.fftfreq(self.Fourier.size*factor)[0:math.floor(length/factor)]*(1/self.t_step/10**3)
+        else:
+            max_res=1/self.T_0
+            print("The resolution is too good, max resolution is: %.0f" % max_res + " Hz")
     
     def tester(self,normalize=1,numbertest=1):
         self.normalize=normalize
@@ -226,3 +233,87 @@ class plotting:
 
     
         self.freq=np.fft.fftfreq(self.Fourier.size*factor)[0:Half]*(1/self.t_step/10**6)
+        
+        
+    def tester2(self):
+        
+        plt.plot(self.magnetic_x, self.magnetic_y/(2*np.pi),color=self.color, label=self.name)
+        plt.legend()
+        
+        
+    def Timetrace(self):
+        # plt.plot(self.timetrace[0])
+        return self.timetrace
+        
+    def MORSavg(self):
+        k=1
+        timetraceAverage = self.timetrace[0:self.MORSSteps]
+        self.MORSReset = self.MORSSteps
+        while self.MORSReset < int(self.rounds/100)*100: 
+            timetraceAverage += self.timetrace[self.MORSReset:self.MORSReset+self.MORSSteps]
+            k += 1
+            self.MORSReset += self.MORSSteps
+        timetraceAverage = timetraceAverage/k
+        
+        return timetraceAverage
+        
+    def getself(self):
+        return self.z_cell
+    
+    def MORSfitting(self):
+        avgtimetrace = self.MORSavg()
+        N=500
+        omega=np.linspace(min(self.magnetic_y),max(self.magnetic_y),N)
+        demod = np.zeros(N)
+        t = np.arange(len(avgtimetrace))*self.t_step
+        k=0
+        for i in omega:
+            demod[k] = np.sum(-avgtimetrace*np.cos(i*(t+self.t_step)))
+            k += 1
+        omega = omega/(2*np.pi)
+        plt.plot(omega*1E-3,demod)
+        
+        def Lorentzian(omega,omega0,gamma,A,B):
+            return A*((gamma/2)**2 / ((omega-omega0)**2+(gamma/2)**2))+B
+        
+        f_model = omega/1E3
+        psd_model = demod
+        A=np.where(demod>np.max(demod)/2)[0]
+        def lin(omega,demod,a,b):
+            cof = (demod[b]-demod[a])/(omega[b]-omega[a])
+            return (np.max(demod)/2-demod[a])/cof+omega[a]
+        
+        A2 = lin(omega,demod,A[-1]+1,A[-1])-lin(omega,demod,A[0]-1,A[0])
+        
+        # A=omega[np.where(demod>np.max(demod)/2)][-1]-omega[np.where(demod>np.max(demod)/2)][0]
+        print(A2)
+        minimum=np.min(psd_model)
+        psd_model=psd_model
+        omega0=f_model[np.argmax(psd_model)]; gamma=8/1E3; A=np.max(psd_model); B=minimum
+        model = Model(Lorentzian)
+        model.set_param_hint('B', value = B, min=0)
+        model.set_param_hint('A', value = A, min=0)
+        model.set_param_hint('omega0', value = omega0, min=omega0-10,max=omega0+10)
+        model.set_param_hint('gamma', value = gamma, min=0)
+        
+        weights=psd_model
+        result = model.fit(psd_model, omega=f_model)
+        # plt.plot(f_model,result.init_fit,'-')
+        value = result.values["gamma"]*1E3
+        # print(result.values["B"]*minimum)
+        # print(value)
+        text = "FWFM = %0.1f Hz" % value
+        plt.plot(f_model,result.best_fit,'-',label=text)
+        plt.xlabel('Frequency [kHz]')
+        plt.xlabel('Signal [AU]')
+        plt.legend()
+        
+        print(result.fit_report())
+    
+    def save(self,folder=""):
+        filename = folder + "/" + self.filename + ".png"
+        plt.savefig(filename)
+    
+    
+    
+    
